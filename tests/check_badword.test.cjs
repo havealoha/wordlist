@@ -34,7 +34,7 @@ test('safe, normalized, numeric, length and invalid candidates', async () => {
     for (const handle of ['ilovebabies', 'i.love.life', ' I.LOVE.LIFE ', '123', 'a'.repeat(15)]) {
         assert.deepEqual(await classify(handle, policy), { handle, status: 'OK', reason: 'Policy allows candidate' });
     }
-    for (const handle of ['', 'bad@name', 'a'.repeat(16), 'café']) {
+    for (const handle of ['', 'bad@name', 'a'.repeat(16), 'café', 'K']) {
         assert.deepEqual(await classify(handle, policy), { handle, status: 'INVALID', reason: '1-15 chars, only a-z0-9_.-' });
     }
 });
@@ -57,6 +57,34 @@ for (const runtime of ['node', 'python3']) {
             ['s.h.i.t', 'FLAGGED'], ['punchbabies', 'FLAGGED'], ['pu55y', 'FLAGGED'], ['tinypreteenpp', 'FLAGGED'],
             ['ilovebabies', 'OK'], ['I.LOVE.LIFE', 'OK'], ['123', 'OK'], ['bad@name', 'INVALID']
         ]);
+    });
+}
+
+// Invariant: only original ASCII candidates may be normalized; every output
+// field is a JSON-string interior so invalid inputs cannot corrupt the TSV.
+// Failure: Kelvin sign becomes valid 'k', or tabs/control/backslashes alter rows.
+// Negative control: the actual252 CLI fails these same subprocess assertions;
+// restoring lowercase-before-validation or raw interpolation breaks them again.
+for (const runtime of ['node', 'python3']) {
+    test(`${runtime} CLI preserves ASCII boundary and lossless three-field rows`, () => {
+        const candidates = ['K', 'I.LOVE.LIFE', 'bad\tname', 'bad\\name', 'bad"name', 'bad\u0000name', 'bad\u001bname', 'bad\rname'];
+        const input = path.join(evidence, `${runtime}-encoding.txt`);
+        fs.writeFileSync(input, candidates.join('\n') + '\n');
+        const result = spawnSync(runtime, [path.join(root, runtime === 'node' ? 'check_badword.cjs' : 'check_badword.py'), input, '--common-package', commonDirectory], { encoding: 'utf8' });
+        assert.equal(result.status, 0, result.stderr);
+        const rows = result.stdout.trimEnd().split('\n').slice(2);
+        assert.equal(rows.length, candidates.length);
+        const decoded = rows.map(row => {
+            const fields = row.split('\t');
+            assert.equal(fields.length, 3, `corrupt row: ${JSON.stringify(row)}`);
+            return fields.map(field => JSON.parse(`"${field}"`));
+        });
+        assert.deepEqual(decoded.map(row => row[0]), candidates);
+        assert.deepEqual(decoded.map(row => row[1]), ['INVALID', 'OK', 'INVALID', 'INVALID', 'INVALID', 'INVALID', 'INVALID', 'INVALID']);
+        assert.equal(decoded[1][2], 'Policy allows candidate');
+        for (const row of decoded.filter(row => row[1] === 'INVALID')) {
+            assert.equal(row[2], '1-15 chars, only a-z0-9_.-');
+        }
     });
 }
 

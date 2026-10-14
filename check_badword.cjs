@@ -19,12 +19,12 @@ function loadPolicy(packageDirectory) {
 }
 
 async function classify(handle, policy) {
-    const normalized = handle.trim().toLowerCase();
-    // Candidate format is a CLI input contract, not protected-word policy.
-    if (!/^[a-z0-9_.-]{1,15}$/.test(normalized)) {
+    const candidate = handle.trim();
+    // Validate original ASCII before Unicode lowercasing can change its alphabet.
+    if (!/^[A-Za-z0-9_.-]{1,15}$/.test(candidate)) {
         return { handle, status: 'INVALID', reason: '1-15 chars, only a-z0-9_.-' };
     }
-    const result = await policy.checkAvailability(normalized);
+    const result = await policy.checkAvailability(candidate.toLowerCase());
     return { handle, status: result.available ? 'OK' : 'FLAGGED', reason: result.available ? 'Policy allows candidate' : result.reason };
 }
 
@@ -45,7 +45,7 @@ async function main(argv) {
     console.log('HANDLE\tSTATUS\tREASON');
     for (const handle of handles) {
         const result = await classify(handle, policy);
-        console.log(`${result.handle}\t${result.status}\t${result.reason}`);
+        console.log([result.handle, result.status, result.reason].map(field => JSON.stringify(field).slice(1, -1)).join('\t'));
     }
 }
 
